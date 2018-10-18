@@ -1,0 +1,104 @@
+``` r
+library(tidyverse)
+library(lubridate)
+library(broom)
+library(scales)
+library(gganimate)
+
+# This comes from Andrew Heiss' gist. Will be great in my stats class for multivariate regression
+# https://www.andrewheiss.com/
+
+# Load and clean data
+# This data comes from Dark Sky's API
+weather_provo_raw <- read_csv("https://andhs.co/provoweather")
+
+weather_provo_2017 <- weather_provo_raw %>% 
+  mutate(month = month(date, label = TRUE, abbr = FALSE),
+         month_number = month(date, label = FALSE),
+         weekday = wday(date, label = TRUE, abbr = FALSE),
+         weekday_number = wday(date, label = FALSE)) %>% 
+  mutate(precipType = ifelse(is.na(precipType), "none", precipType)) %>% 
+  select(date, month, month_number, weekday, weekday_number,
+         sunriseTime, sunsetTime, moonPhase, precipProbability, precipType,
+         temperatureHigh, temperatureLow, dewPoint, humidity, pressure, 
+         windSpeed, cloudCover, visibility, uvIndex)
+
+winter_spring <- weather_provo_2017 %>% 
+  filter(month_number <= 5) %>% 
+  mutate(month = factor(month, ordered = FALSE)) %>% 
+  mutate(humidity = humidity * 100,
+         cloudCover = cloudCover * 100,
+         precipProbability = precipProbability * 100)
+
+# Run all these models in one data frame
+models <- tribble(
+  ~formula,
+  "temperatureHigh ~ humidity",
+  "temperatureHigh ~ humidity + windSpeed",
+  "temperatureHigh ~ humidity + windSpeed + cloudCover",
+  "temperatureHigh ~ humidity + windSpeed + cloudCover + precipProbability",
+  "temperatureHigh ~ humidity + windSpeed + cloudCover + precipProbability + visibility"
+) %>% 
+  # Run a model in each row
+  mutate(model = formula %>% map(~ lm(.x, data = winter_spring))) %>% 
+  # Extract model elements
+  mutate(model_tidy = model %>% map(tidy),
+         model_glance = model %>% map(glance))
+
+# Only look at the intercept and the slope for humidity
+humidity_only <- models %>% 
+  unnest(model_tidy) %>% 
+  filter(term %in% c("(Intercept)", "humidity")) %>% 
+  select(formula, term, estimate) %>% 
+  spread(term, estimate) %>% 
+  mutate(humidity_nice = paste0("beta[humidity]: ", round(humidity, 3))) %>% 
+  mutate(group_thing = 1:n())
+
+# Plot the lines with facets
+ggplot(humidity_only) +
+  geom_point(data = winter_spring, aes(x = humidity, y = temperatureHigh),
+             color = "#410660") + 
+  geom_abline(aes(intercept = `(Intercept)`, slope = humidity, group = formula),
+              size = 1, color = "grey40") +
+  geom_label(aes(x = 25, y = 20, label = humidity_nice, group = formula),
+             parse = TRUE, color = "white", fill = "#d19b12",
+             family = "Roboto Condensed", size = 4, hjust = 0, vjust = 0) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = degree_format()) +
+  labs(x = "Humidity", y = "High temperature") +
+  theme_minimal(base_family = "Roboto Condensed") +
+  facet_wrap(~ formula)
+```
+
+![](https://i.imgur.com/NTdqvwC.png)
+
+``` r
+
+# Animate this puppy
+animated_thing <- ggplot(humidity_only) +
+  geom_point(data = winter_spring, aes(x = humidity, y = temperatureHigh),
+             color = "#410660") + 
+  geom_abline(aes(intercept = `(Intercept)`, slope = humidity),
+              size = 1, color = "grey40") +
+  geom_label(aes(x = 25, y = 20, label = humidity_nice),
+             parse = TRUE, color = "white", fill = "#d19b12",
+             family = "Roboto Condensed", size = 4, hjust = 0, vjust = 0) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = degree_format()) +
+  labs(x = "Humidity", y = "High temperature",
+       subtitle = "{closest_state}") +
+  theme_minimal(base_family = "Roboto Condensed")  +
+  transition_states(formula, transition_length = 0.5, state_length = 3) +
+  enter_fade() +
+  ease_aes('sine-in-out')
+
+# animated_gif <- animate(animated_thing,
+#                         width = 1000, height = 700, res = 200)
+# 
+# animated_movie <- animate(animated_thing,
+#                           width = 1000, height = 700, res = 200,
+#                           renderer = ffmpeg_renderer())
+# 
+# anim_save(animated_gif, filename = "~/Desktop/regression.gif")
+# anim_save(animated_movie, filename = "~/Desktop/regression.mp4")
+```
